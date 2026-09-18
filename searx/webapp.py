@@ -59,6 +59,7 @@ from searx.botdetection import link_token, ProxyFix
 
 from searx.data import ENGINE_DESCRIPTIONS
 from searx.result_types import Answer
+from searx.reverse_image import MAX_UPLOAD_BYTES, ReverseImageError, reverse_image_search
 from searx.settings_defaults import OUTPUT_FORMATS
 from searx.settings_loader import DEFAULT_SETTINGS_FILE
 from searx.exceptions import SearxParameterException
@@ -597,6 +598,63 @@ def index():
 @app.route('/healthz', methods=['GET'])
 def health():
     return Response('OK', mimetype='text/plain')
+
+
+
+
+@app.route('/reverse-image', methods=['POST'])
+def reverse_image():
+    """Reverse image search by multipart upload or public image URL."""
+    payload = flask.request.get_json(silent=True) if flask.request.is_json else None
+    payload = payload if isinstance(payload, dict) else {}
+
+    upload = flask.request.files.get('image')
+    image_url = str(flask.request.form.get('image_url') or payload.get('image_url') or '').strip() or None
+    if upload is not None and image_url is not None:
+        return jsonify({'error': 'provide exactly one of image or image_url'}), 400
+    if upload is None and image_url is None:
+        return jsonify({'error': 'provide image multipart file or image_url'}), 400
+
+    providers_raw = str(
+        flask.request.form.get('providers') or payload.get('providers') or 'yandex'
+    )
+    providers = tuple(part.strip() for part in providers_raw.split(',') if part.strip())
+    safe_raw = str(flask.request.form.get('safe') or payload.get('safe') or '0').strip().lower()
+    safe = safe_raw in {'1', 'true', 'yes', 'on', 'active'}
+    try:
+        limit = int(flask.request.form.get('limit') or payload.get('limit') or 30)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'limit must be an integer'}), 400
+
+    kwargs = {
+        'image_url': image_url,
+        'providers': providers,
+        'safe': safe,
+        'limit': limit,
+    }
+    if upload is not None:
+        image_bytes = upload.stream.read(MAX_UPLOAD_BYTES + 1)
+        if len(image_bytes) > MAX_UPLOAD_BYTES:
+            return jsonify({'error': f'image upload must be <= {MAX_UPLOAD_BYTES} bytes'}), 413
+        kwargs.update(
+            {
+                'image_bytes': image_bytes,
+                'image_url': None,
+                'filename': upload.filename or 'image.jpg',
+                'mime_type': upload.mimetype or 'application/octet-stream',
+            }
+        )
+
+    try:
+        result = reverse_image_search(**kwargs)
+    except ReverseImageError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception('reverse image search failed: %s', exc)
+        return jsonify({'error': 'reverse image search failed'}), 500
+
+    status = 200 if any(item.get('ok') for item in result.get('providers', [])) else 502
+    return jsonify(result), status
 
 
 @app.route('/client<token>.css', methods=['GET', 'POST'])

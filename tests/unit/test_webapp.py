@@ -180,6 +180,40 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
         self.assertEqual(result.status_code, 200)
         self.assertIn(b'OK', result.data)
 
+    def test_reverse_image_missing_input(self):
+        result = self.client.post('/reverse-image', json={})
+        self.assertEqual(result.status_code, 400)
+        self.assertEqual(json.loads(result.data.decode())['error'], 'provide image multipart file or image_url')
+
+    def test_reverse_image_url(self):
+        def reverse_image_mock(**kwargs):
+            self.assertEqual(kwargs['image_url'], 'https://example.test/image.jpg')
+            self.assertEqual(kwargs['providers'], ('yandex',))
+            return {
+                'fingerprint': 'abc',
+                'source': 'url',
+                'safe': False,
+                'results': [
+                    {
+                        'provider': 'yandex',
+                        'match_type': 'exact',
+                        'title': 'Example',
+                        'url': 'https://example.test/page',
+                    }
+                ],
+                'providers': [{'provider': 'yandex', 'ok': True, 'count': 1, 'latency_ms': 1}],
+                'metadata': {},
+            }
+
+        self.setattr4test(searx.webapp, 'reverse_image_search', reverse_image_mock)
+        result = self.client.post(
+            '/reverse-image',
+            json={'image_url': 'https://example.test/image.jpg', 'providers': 'yandex'},
+        )
+        self.assertEqual(result.status_code, 200)
+        payload = json.loads(result.data.decode())
+        self.assertEqual(payload['results'][0]['match_type'], 'exact')
+
     def test_preferences(self):
         result = self.client.get('/preferences')
         self.assertEqual(result.status_code, 200)

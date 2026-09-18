@@ -1,0 +1,20 @@
+# Oscar production overlay for SearXNG 2026.7.12.
+# The base image is the currently deployed, pinned local image; all custom
+# Python sources that differ from upstream are copied from this fork.
+ARG BASE_IMAGE=docker.io/searxng/searxng:2026.7.12-c19d86faa
+FROM ${BASE_IMAGE}
+
+COPY searx/webapp.py /usr/local/searxng/searx/webapp.py
+COPY searx/reverse_image.py /usr/local/searxng/searx/reverse_image.py
+COPY searx/engines/yandex.py /usr/local/searxng/searx/engines/yandex.py
+COPY searx/engines/yandex_videos.py /usr/local/searxng/searx/engines/yandex_videos.py
+COPY searx/engines/yandex_proxy_pool.py /usr/local/searxng/searx/engines/yandex_proxy_pool.py
+
+# Official SearXNG images ship unchecked-hash bytecode. Force fresh bytecode
+# after overlaying our sources or Python can continue loading the old routes.
+RUN python -m compileall -q -f \
+    /usr/local/searxng/searx/webapp.py \
+    /usr/local/searxng/searx/reverse_image.py \
+    /usr/local/searxng/searx/engines/yandex.py \
+    /usr/local/searxng/searx/engines/yandex_videos.py \
+    /usr/local/searxng/searx/engines/yandex_proxy_pool.py
