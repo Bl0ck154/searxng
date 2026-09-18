@@ -94,7 +94,7 @@ def request(query, params):
         )
         params['headers']['Accept-Language'] = 'ru-RU,ru;q=0.9,en;q=0.7'
         # Let response() see 403/429/CAPTCHA pages so it can try the bounded
-        # free-proxy fallback before the bot spends a SerpApi request.
+        # server-wide proxy fallback instead of failing the search outright.
         params['raise_for_httperror'] = False
         params['url'] = f"{base_url_images}?{urlencode(query_params_images)}"
         apply_yandex_route(params)
