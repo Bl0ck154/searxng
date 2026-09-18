@@ -2581,12 +2581,15 @@ engines:
       description: "Personal websites focused search engine."
       results: HTML
 
+  # Oscar production intentionally keeps Yandex web enabled alongside
+  # Google CSE. Keep this default aligned with /opt/searxng/settings.yml
+  # and searxng-guard so rebuilds do not reintroduce source/runtime drift.
   - name: yandex
     engine: yandex
     categories: general
     search_type: web
     shortcut: yd
-    disabled: true
+    disabled: false
 
   - name: yandex images
     engine: yandex
