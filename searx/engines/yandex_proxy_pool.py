@@ -26,7 +26,7 @@ PUBLIC_NETWORK = os.getenv("YANDEX_PUBLIC_NETWORK", "yandex_public_proxy")
 WGET_TIMEOUT = 4
 PROCESS_TIMEOUT = 5.5
 
-NORMAL_PUBLIC_EVERY = max(2, int(os.getenv("YANDEX_NORMAL_PUBLIC_EVERY", "5")))  # 20% public
+NORMAL_PUBLIC_EVERY = max(2, int(os.getenv("YANDEX_NORMAL_PUBLIC_EVERY", "10")))  # 10% public
 DEGRADED_DIRECT_EVERY = max(2, int(os.getenv("YANDEX_DEGRADED_DIRECT_EVERY", "5")))  # 20% direct probes
 DEGRADED_SECONDS = max(60, int(os.getenv("YANDEX_DEGRADED_SECONDS", "900")))
 RECOVERY_DIRECT_SUCCESSES = max(1, int(os.getenv("YANDEX_RECOVERY_DIRECT_SUCCESSES", "3")))
@@ -56,11 +56,13 @@ def _safe_headers(headers) -> dict[str, str]:
 
 
 def choose_yandex_route() -> str:
-    """Prefer direct Yandex for latency; proxying is emergency fallback only."""
-    # Public proxies are dramatically slower and much less reliable for image
-    # search on this host. Keep the hot path direct. response() already falls
-    # back through the broker when the direct route actually fails.
-    return "direct"
+    """Keep the hot path direct and sample the public pool occasionally."""
+    global _ROUTE_SEQ
+    with _ROUTE_LOCK:
+        _ROUTE_SEQ += 1
+        # The emergency fallback remains broker-any (Webshare first). Public
+        # proxies are only sampled occasionally so they do not dominate latency.
+        return "public" if _ROUTE_SEQ % NORMAL_PUBLIC_EVERY == 0 else "direct"
 
 
 def apply_yandex_route(params) -> str:
@@ -91,7 +93,7 @@ def report_yandex_route_result(resp, ok: bool) -> None:
             _DEGRADED_UNTIL = max(_DEGRADED_UNTIL, now + DEGRADED_SECONDS)
             if not degraded:
                 LOG.warning(
-                    "Yandex direct route degraded; shifting to public proxies for %ds with direct probes",
+                    "Yandex direct route degraded; broker fallback armed for %ds while direct remains primary",
                     DEGRADED_SECONDS,
                 )
             return
