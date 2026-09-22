@@ -1,14 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Yandex routing/fallback through the canonical server-wide proxy broker.
 
-Normal mode deliberately spreads a small fraction of requests over the
-broker's public-only pool to reduce pressure on the VPS IP without consuming
-account-backed Webshare bandwidth. If direct Yandex starts returning blocked
-or unparsable responses, routing temporarily shifts toward public proxies while
-still probing the direct path for recovery.
-
-The full broker pool (which may include Webshare) is used only as the emergency
-fallback after the selected direct/public route has actually failed.
+Normal mode keeps the hot path direct and sends only a small sample through the
+broker's full Yandex pool. The broker ranks static Webshare ahead of public
+proxies, so sampled proxy traffic uses the stable account-backed lane first and
+public proxies only as fallback. Direct failures can still use the same broker
+pool as an emergency retry.
 """
 
 from __future__ import annotations
@@ -22,11 +19,11 @@ from types import SimpleNamespace
 
 LOG = logging.getLogger("searx.engines.yandex_proxy_pool")
 BROKER_PROXY = os.getenv("YANDEX_PROXY_BROKER_URL", "http://172.17.0.1:20140")
-PUBLIC_NETWORK = os.getenv("YANDEX_PUBLIC_NETWORK", "yandex_public_proxy")
+BROKER_NETWORK = os.getenv("YANDEX_BROKER_NETWORK", "yandex_broker_proxy")
 WGET_TIMEOUT = 4
 PROCESS_TIMEOUT = 5.5
 
-NORMAL_PUBLIC_EVERY = max(2, int(os.getenv("YANDEX_NORMAL_PUBLIC_EVERY", "10")))  # 10% public
+NORMAL_BROKER_EVERY = max(2, int(os.getenv("YANDEX_NORMAL_BROKER_EVERY", "10")))  # 10% broker sample
 DEGRADED_DIRECT_EVERY = max(2, int(os.getenv("YANDEX_DEGRADED_DIRECT_EVERY", "5")))  # 20% direct probes
 DEGRADED_SECONDS = max(60, int(os.getenv("YANDEX_DEGRADED_SECONDS", "900")))
 RECOVERY_DIRECT_SUCCESSES = max(1, int(os.getenv("YANDEX_RECOVERY_DIRECT_SUCCESSES", "3")))
@@ -56,24 +53,22 @@ def _safe_headers(headers) -> dict[str, str]:
 
 
 def choose_yandex_route() -> str:
-    """Keep the hot path direct and sample the public pool occasionally."""
+    """Keep the hot path direct and sample broker-any occasionally."""
     global _ROUTE_SEQ
     with _ROUTE_LOCK:
         _ROUTE_SEQ += 1
-        # The emergency fallback remains broker-any (Webshare first). Public
-        # proxies are only sampled occasionally so they do not dominate latency.
-        return "public" if _ROUTE_SEQ % NORMAL_PUBLIC_EVERY == 0 else "direct"
+        return "broker" if _ROUTE_SEQ % NORMAL_BROKER_EVERY == 0 else "direct"
 
 
 def apply_yandex_route(params) -> str:
     """Choose a route and switch the current SearXNG request network if needed."""
     route = choose_yandex_route()
     params["_yandex_route"] = route
-    if route == "public":
+    if route == "broker":
         # Import lazily to avoid engine/network initialization cycles.
         from searx import network as searx_network
 
-        searx_network.set_context_network_name(PUBLIC_NETWORK)
+        searx_network.set_context_network_name(BROKER_NETWORK)
     return route
 
 
@@ -103,7 +98,7 @@ def report_yandex_route_result(resp, ok: bool) -> None:
             if _DIRECT_RECOVERY_STREAK >= RECOVERY_DIRECT_SUCCESSES:
                 _DEGRADED_UNTIL = 0.0
                 _DIRECT_RECOVERY_STREAK = 0
-                LOG.info("Yandex direct route recovered; returning to normal direct/public mix")
+                LOG.info("Yandex direct route recovered; returning to normal direct/broker mix")
 
 
 def fetch_yandex_via_free_proxy(url: str, headers, expected_markers: tuple[str, ...]):
